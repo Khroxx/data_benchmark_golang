@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,11 +31,13 @@ type benchmarkResponse struct {
 }
 
 func main() {
+	loadEnvFile(".env")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", pingHandler)
 	mux.HandleFunc("/api/golang/benchmark", benchmarkHandler)
 
-	addr := ":8080"
+	addr := ":" + firstNonEmpty(os.Getenv("PORT"), "8080")
 	log.Printf("Server laeuft auf %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
@@ -216,6 +221,35 @@ func median(values []int64) float64 {
 	}
 
 	return float64(sorted[middle-1]+sorted[middle]) / 2
+}
+
+func loadEnvFile(path string) {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
+		if key == "" || os.Getenv(key) != "" {
+			continue
+		}
+
+		_ = os.Setenv(key, value)
+	}
 }
 
 func firstNonEmpty(values ...string) string {

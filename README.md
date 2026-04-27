@@ -27,6 +27,22 @@ Supported query params:
 - `size` or `sizeKb`
 - `runs`
 
+## Environment
+
+This repo does not require private secrets for local testing.
+
+Public example env file:
+
+```bash
+cp .env.example .env
+```
+
+Current public variables:
+
+- `PORT=8080`
+
+The Go service loads `.env` on startup and falls back to `8080` if `PORT` is not set.
+
 ## Local development
 
 Run the service:
