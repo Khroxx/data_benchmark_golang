@@ -40,6 +40,9 @@ cp .env.example .env
 Current public variables:
 
 - `PORT=8080`
+- `CORS_ALLOWED_ORIGIN=*`
+- `CORS_ALLOWED_METHODS=GET, OPTIONS`
+- `CORS_ALLOWED_HEADERS=Content-Type, Authorization`
 
 The Go service loads `.env` on startup and falls back to `8080` if `PORT` is not set.
 

@@ -38,8 +38,9 @@ func main() {
 	mux.HandleFunc("/api/golang/benchmark", benchmarkHandler)
 
 	addr := ":" + firstNonEmpty(os.Getenv("PORT"), "8080")
+	handler := withCORS(mux)
 	log.Printf("Server laeuft auf %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, handler))
 }
 
 func pingHandler(w http.ResponseWriter, _ *http.Request) {
@@ -250,6 +251,25 @@ func loadEnvFile(path string) {
 
 		_ = os.Setenv(key, value)
 	}
+}
+
+func withCORS(next http.Handler) http.Handler {
+	allowedOrigin := firstNonEmpty(os.Getenv("CORS_ALLOWED_ORIGIN"), "*")
+	allowedMethods := firstNonEmpty(os.Getenv("CORS_ALLOWED_METHODS"), "GET, OPTIONS")
+	allowedHeaders := firstNonEmpty(os.Getenv("CORS_ALLOWED_HEADERS"), "Content-Type, Authorization")
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", allowedMethods)
+		w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func firstNonEmpty(values ...string) string {
