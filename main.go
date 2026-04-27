@@ -1,58 +1,229 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 )
 
-func main() {
-	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "pong")
-	})
+const defaultRuns = 1
 
-	http.HandleFunc("/api/golang/benchmark", benchmarkHandler)
+type benchmarkResponse struct {
+	Type       string   `json:"type"`
+	SizeKB     int      `json:"sizeKb"`
+	Runs       int      `json:"runs"`
+	Durations  []int64  `json:"durations"`
+	AverageMS  float64  `json:"average_ms"`
+	MedianMS   float64  `json:"median_ms"`
+	DataBytes  int      `json:"data_bytes"`
+	Generated  bool     `json:"generated"`
+	ServerTime string   `json:"server_time"`
+	Warnings   []string `json:"warnings,omitempty"`
+}
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", pingHandler)
+	mux.HandleFunc("/api/golang/benchmark", benchmarkHandler)
 
 	addr := ":8080"
-	log.Printf("Server läuft auf %s", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	log.Printf("Server laeuft auf %s", addr)
+	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func pingHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprintln(w, "pong")
 }
 
 func benchmarkHandler(w http.ResponseWriter, r *http.Request) {
-	typ := r.URL.Query().Get("type")
-	sizeKb := r.URL.Query().Get("sizeKb")
-	var data []byte
-	switch typ {
-	case "flat-json":
-		data = generateFlatJSON(sizeKb)
-	case "nested-json":
-		data = generateNestedJSON(sizeKb)
-	case "csv":
-		data = generateCSV(sizeKb)
-	case "blob":
-		data = generateBlob(sizeKb)
-	default:
-		http.Error(w, "invalid type", http.StatusBadRequest)
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Write(data)
+
+	query := r.URL.Query()
+	payloadType := strings.TrimSpace(query.Get("type"))
+	if payloadType == "" {
+		http.Error(w, "missing type query parameter", http.StatusBadRequest)
+		return
+	}
+
+	sizeKB, err := parseSizeKB(query)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	runs, warnings := parseRuns(query.Get("runs"))
+	durations := make([]int64, 0, runs)
+
+	var payload []byte
+	for i := 0; i < runs; i++ {
+		start := time.Now()
+		payload, err = generatePayload(payloadType, sizeKB)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		durations = append(durations, time.Since(start).Milliseconds())
+	}
+
+	response := benchmarkResponse{
+		Type:       payloadType,
+		SizeKB:     sizeKB,
+		Runs:       runs,
+		Durations:  durations,
+		AverageMS:  average(durations),
+		MedianMS:   median(durations),
+		DataBytes:  len(payload),
+		Generated:  true,
+		ServerTime: time.Now().UTC().Format(time.RFC3339),
+		Warnings:   warnings,
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+	}
 }
 
-func generateFlatJSON(sizeKb string) []byte {
-	return make([]byte, parseSize(sizeKb))
+func parseSizeKB(query url.Values) (int, error) {
+	rawSize := strings.TrimSpace(firstNonEmpty(
+		query.Get("sizeKb"),
+		query.Get("size"),
+	))
+	if rawSize == "" {
+		return 0, fmt.Errorf("missing sizeKb query parameter")
+	}
+
+	sizeKB, err := strconv.Atoi(rawSize)
+	if err != nil || sizeKB < 1 {
+		return 0, fmt.Errorf("invalid sizeKb query parameter")
+	}
+
+	return sizeKB, nil
 }
-func generateNestedJSON(sizeKb string) []byte {
-	return make([]byte, parseSize(sizeKb))
+
+func parseRuns(rawRuns string) (int, []string) {
+	rawRuns = strings.TrimSpace(rawRuns)
+	if rawRuns == "" {
+		return defaultRuns, nil
+	}
+
+	runs, err := strconv.Atoi(rawRuns)
+	if err != nil || runs < 1 {
+		return defaultRuns, []string{"invalid runs value, defaulted to 1"}
+	}
+
+	return runs, nil
 }
-func generateCSV(sizeKb string) []byte {
-	return make([]byte, parseSize(sizeKb))
+
+func generatePayload(payloadType string, sizeKB int) ([]byte, error) {
+	targetBytes := sizeKB * 1024
+
+	switch payloadType {
+	case "flat-json":
+		return buildFlatJSON(targetBytes), nil
+	case "nested-json":
+		return buildNestedJSON(targetBytes), nil
+	case "csv":
+		return buildCSV(targetBytes), nil
+	case "blob":
+		return buildBlob(targetBytes), nil
+	default:
+		return nil, fmt.Errorf("invalid type query parameter")
+	}
 }
-func generateBlob(sizeKb string) []byte {
-	return make([]byte, parseSize(sizeKb))
+
+func buildFlatJSON(targetBytes int) []byte {
+	base := `{"id":1,"name":"benchmark-entry","status":"ok","category":"flat","active":true,"score":12345}`
+	return padContent(base, targetBytes)
 }
-func parseSize(sizeKb string) int {
-	var n int
-	fmt.Sscanf(sizeKb, "%d", &n)
-	return n * 1024
+
+func buildNestedJSON(targetBytes int) []byte {
+	base := `{"meta":{"name":"benchmark","version":1},"items":[{"id":1,"tags":["alpha","beta"],"payload":{"kind":"nested","enabled":true,"metrics":{"count":3,"value":42}}}]}`
+	return padContent(base, targetBytes)
+}
+
+func buildCSV(targetBytes int) []byte {
+	base := "id,name,status,value\n1,benchmark,ok,42\n2,runner,ok,84\n"
+	return padContent(base, targetBytes)
+}
+
+func buildBlob(targetBytes int) []byte {
+	base := "benchmark-payload-blob-"
+	return padContent(base, targetBytes)
+}
+
+func padContent(base string, targetBytes int) []byte {
+	if targetBytes <= 0 {
+		return []byte{}
+	}
+
+	if len(base) >= targetBytes {
+		return []byte(base[:targetBytes])
+	}
+
+	var builder strings.Builder
+	builder.Grow(targetBytes)
+
+	for builder.Len() < targetBytes {
+		remaining := targetBytes - builder.Len()
+		if remaining >= len(base) {
+			builder.WriteString(base)
+			continue
+		}
+
+		builder.WriteString(base[:remaining])
+	}
+
+	return []byte(builder.String())
+}
+
+func average(values []int64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	var total int64
+	for _, value := range values {
+		total += value
+	}
+
+	return float64(total) / float64(len(values))
+}
+
+func median(values []int64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	sorted := append([]int64(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] < sorted[j]
+	})
+
+	middle := len(sorted) / 2
+	if len(sorted)%2 == 1 {
+		return float64(sorted[middle])
+	}
+
+	return float64(sorted[middle-1]+sorted[middle]) / 2
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+
+	return ""
 }
