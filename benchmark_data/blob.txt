@@ -1,0 +1,14 @@
+Apollo 11 mission data excerpt.
+
+Launch vehicle: Saturn V SA-506.
+Launch site: Kennedy Space Center Launch Complex 39A.
+Launch time: 1969-07-16T13:32:00Z.
+Command module: Columbia.
+Lunar module: Eagle.
+Crew: Neil A. Armstrong, Michael Collins, Edwin E. Aldrin Jr.
+Lunar landing site: Mare Tranquillitatis.
+Lunar landing time: 1969-07-20T20:17:40Z.
+First step on lunar surface: 1969-07-21T02:56:15Z.
+Splashdown: 1969-07-24T16:50:35Z in the Pacific Ocean.
+
+This text fixture uses public historical mission facts as a repeatable blob payload. It is intentionally plain text so all backends can repeat and truncate identical bytes for fixed-size benchmark requests.

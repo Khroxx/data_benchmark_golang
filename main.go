@@ -16,6 +16,14 @@ import (
 )
 
 const defaultRuns = 1
+const benchmarkDataDir = "benchmark_data"
+
+var payloadFiles = map[string]string{
+	"flat-json":   "flat.json",
+	"nested-json": "nested.json",
+	"csv":         "table.csv",
+	"blob":        "blob.txt",
+}
 
 type benchmarkResponse struct {
 	Type       string   `json:"type"`
@@ -133,64 +141,42 @@ func parseRuns(rawRuns string) (int, []string) {
 
 func generatePayload(payloadType string, sizeKB int) ([]byte, error) {
 	targetBytes := sizeKB * 1024
+	fixture, err := loadPayloadFixture(payloadType)
+	if err != nil {
+		return nil, err
+	}
 
-	switch payloadType {
-	case "flat-json":
-		return buildFlatJSON(targetBytes), nil
-	case "nested-json":
-		return buildNestedJSON(targetBytes), nil
-	case "csv":
-		return buildCSV(targetBytes), nil
-	case "blob":
-		return buildBlob(targetBytes), nil
-	default:
+	return repeatBytes(fixture, targetBytes), nil
+}
+
+func loadPayloadFixture(payloadType string) ([]byte, error) {
+	fileName, ok := payloadFiles[payloadType]
+	if !ok {
 		return nil, fmt.Errorf("invalid type query parameter")
 	}
+
+	data, err := os.ReadFile(filepath.Join(benchmarkDataDir, fileName))
+	if err != nil {
+		return nil, fmt.Errorf("benchmark data file not found: %s", fileName)
+	}
+	return data, nil
 }
 
-func buildFlatJSON(targetBytes int) []byte {
-	base := `{"id":1,"name":"benchmark-entry","status":"ok","category":"flat","active":true,"score":12345}`
-	return padContent(base, targetBytes)
-}
-
-func buildNestedJSON(targetBytes int) []byte {
-	base := `{"meta":{"name":"benchmark","version":1},"items":[{"id":1,"tags":["alpha","beta"],"payload":{"kind":"nested","enabled":true,"metrics":{"count":3,"value":42}}}]}`
-	return padContent(base, targetBytes)
-}
-
-func buildCSV(targetBytes int) []byte {
-	base := "id,name,status,value\n1,benchmark,ok,42\n2,runner,ok,84\n"
-	return padContent(base, targetBytes)
-}
-
-func buildBlob(targetBytes int) []byte {
-	base := "benchmark-payload-blob-"
-	return padContent(base, targetBytes)
-}
-
-func padContent(base string, targetBytes int) []byte {
+func repeatBytes(base []byte, targetBytes int) []byte {
 	if targetBytes <= 0 {
 		return []byte{}
 	}
 
-	if len(base) >= targetBytes {
-		return []byte(base[:targetBytes])
+	payload := make([]byte, targetBytes)
+	if len(base) == 0 {
+		return payload
 	}
 
-	var builder strings.Builder
-	builder.Grow(targetBytes)
-
-	for builder.Len() < targetBytes {
-		remaining := targetBytes - builder.Len()
-		if remaining >= len(base) {
-			builder.WriteString(base)
-			continue
-		}
-
-		builder.WriteString(base[:remaining])
+	for offset := 0; offset < targetBytes; {
+		offset += copy(payload[offset:], base)
 	}
 
-	return []byte(builder.String())
+	return payload
 }
 
 func average(values []int64) float64 {
